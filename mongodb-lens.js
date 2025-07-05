@@ -5764,11 +5764,9 @@ const getPackageVersion = () => {
 }
 
 const createBooleanSchema = (description, defaultValue = 'true') =>
-  z.string()
-    .transform(val => val?.toLowerCase())
-    .pipe(z.enum(['true', 'false']))
-    .default(defaultValue)
+  z.enum(['true', 'false'])
     .describe(description)
+    .default(defaultValue)
 
 const arraysEqual = (a, b) => {
   if (a.length !== b.length) return false
