@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/furey-mongodb-lens-badge.png)](https://mseep.ai/app/furey-mongodb-lens)
+
 # MongoDB Lens
 
 [![License](https://img.shields.io/github/license/furey/mongodb-lens)](./LICENSE)
