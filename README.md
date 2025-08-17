@@ -5,6 +5,8 @@
 [![NPM Version](https://img.shields.io/npm/v/mongodb-lens)](https://www.npmjs.com/package/mongodb-lens)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-donate-orange.svg)](https://www.buymeacoffee.com/furey)
 
+[![Trust Score](https://archestra.ai/mcp-catalog/api/badge/quality/furey/mongodb-lens)](https://archestra.ai/mcp-catalog/furey__mongodb-lens)
+
 **MongoDB Lens** is a local Model Context Protocol (MCP) server with full featured access to MongoDB databases using natural language via LLMs to perform queries, run aggregations, optimize performance, and more.
 
 ## Contents
