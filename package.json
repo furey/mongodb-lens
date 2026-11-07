@@ -1,6 +1,6 @@
 {
   "name": "mongodb-lens",
-  "version": "9.1.4",
+  "version": "9.1.5",
   "author": "James Furey (https://about.me/jamesfurey)",
   "description": "MongoDB Lens: Full Featured MCP Server for MongoDB Databases",
   "license": "MIT",
