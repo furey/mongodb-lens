@@ -251,22 +251,31 @@ docker run --rm -i --network=host --pull=always furey/mongodb-lens
 > Node.js from source requires [Node.js](https://nodejs.org/en/download) installed and running on your system (suggestion: use [Volta](https://volta.sh)).
 
 1. Clone the MongoDB Lens repository:<br>
+
     ```console
     git clone https://github.com/furey/mongodb-lens.git
     ```
+
 1. Navigate to the cloned repository directory:<br>
+
     ```console
     cd /path/to/mongodb-lens
     ```
+
 1. Ensure Node.js is installed:<br>
+
     ```console
     node --version # Ideally >= v22.x but MongoDB Lens is >= v18.x compatible
     ```
+
 1. Install Node.js dependencies:<br>
+
     ```console
     npm ci
     ```
+
 1. Start the server:<br>
+
     ```console
     # Using default connection string mongodb://localhost:27017
     node mongodb-lens.js
@@ -281,22 +290,31 @@ docker run --rm -i --network=host --pull=always furey/mongodb-lens
 > Docker from source requires [Docker](https://docs.docker.com/get-started/get-docker) installed and running on your system.
 
 1. Clone the MongoDB Lens repository:<br>
+
     ```console
     git clone https://github.com/furey/mongodb-lens.git
     ```
+
 1. Navigate to the cloned repository directory:<br>
+
     ```console
     cd /path/to/mongodb-lens
     ```
+
 1. Ensure Docker is installed:<br>
+
     ```console
     docker --version # Ideally >= v27.x
     ```
+
 1. Build the Docker image:<br>
+
     ```console
     docker build -t mongodb-lens .
     ```
+
 1. Run the container:<br>
+
     ```console
     # Using default connection string mongodb://localhost:27017
     docker run --rm -i --network=host mongodb-lens
@@ -330,14 +348,19 @@ To use MongoDB Lens with older MongoDB instances, you need to use a MongoDB Node
 #### Older MongoDB Versions: Running from Source
 
 1. Clone the MongoDB Lens repository:<br>
+
     ```console
     git clone https://github.com/furey/mongodb-lens.git
     ```
+
 1. Navigate to the cloned repository directory:<br>
+
     ```console
     cd /path/to/mongodb-lens
     ```
+
 1. Modify `package.json`:<br>
+
     ```diff
     "dependencies": {
       ...
@@ -346,11 +369,15 @@ To use MongoDB Lens with older MongoDB instances, you need to use a MongoDB Node
       ...
     }
     ```
+
 1. Install Node.js dependencies:<br>
+
     ```console
     npm install
     ```
+
 1. Start MongoDB Lens:<br>
+
     ```console
     node mongodb-lens.js mongodb://older-mongodb-instance
     ```
@@ -667,6 +694,7 @@ docker run --rm -i --network=host --pull=always -e CONFIG_DEFAULTS_QUERY_LIMIT='
 For consistent environment variable usage across Windows, macOS, and Linux, consider using `cross-env`:
 
 1. Install cross-env globally:<br>
+
    ```console
    # Using NPM
    npm install -g cross-env
@@ -674,7 +702,9 @@ For consistent environment variable usage across Windows, macOS, and Linux, cons
    # Using Volta (see: https://volta.sh)
    volta install cross-env
    ```
+
 1. Prefix any NPX or Node.js environment variables in this document's examples:<br>
+
    ```console
    # Example NPX usage with cross-env
    cross-env CONFIG_DEFAULTS_QUERY_LIMIT='25' npx -y mongodb-lens@latest
@@ -714,6 +744,7 @@ For each option:
 - To use a custom config file, set [`CONFIG_PATH`](#configuration-config-file) environment variable.
 - To include environment variables:
   - For NPX or Node.js add `"env": {}` with key-value pairs, for example:<br>
+
     ```json
     "command": "/path/to/npx",
     "args": [
@@ -725,7 +756,9 @@ For each option:
       "CONFIG_LOG_LEVEL": "verbose"
     }
     ```
+
   - For Docker add `-e` flags, for example:<br>
+
     ```json
     "command": "docker",
     "args": [
@@ -818,6 +851,7 @@ For each option:
 Example NPX usage:
 
 1. Run MCP Inspector:<br>
+
     ```console
     # Using default connection string mongodb://localhost:27017
     npx -y @modelcontextprotocol/inspector npx -y mongodb-lens@latest
@@ -828,7 +862,8 @@ Example NPX usage:
     # Using custom ports
     SERVER_PORT=1234 CLIENT_PORT=5678 npx -y @modelcontextprotocol/inspector npx -y mongodb-lens@latest
     ```
-1. Open MCP Inspector: http://localhost:5173
+
+1. Open MCP Inspector: <http://localhost:5173>
 
 MCP Inspector should support the full range of MongoDB Lens capabilities, including autocompletion for collection names and query fields.
 
@@ -1120,10 +1155,13 @@ This following tutorial guides you through setting up a MongoDB container with s
 > If Docker is already running a container on port 27017, stop it before proceeding.
 
 1. Initialise the sample data container:<br>
+
     ```console
     docker run --name mongodb-sampledata -d -p 27017:27017 mongo:6
     ```
+
 1. Verify the container is running without issue:<br>
+
     ```console
     docker ps | grep mongodb-sampledata
     ```
@@ -1133,14 +1171,19 @@ This following tutorial guides you through setting up a MongoDB container with s
 MongoDB provides several [sample datasets](https://www.mongodb.com/docs/atlas/sample-data/#available-sample-datasets) which we'll use to explore MongoDB Lens.
 
 1. Download the sample datasets:
+
     ```console<br>
     curl -LO https://atlas-education.s3.amazonaws.com/sampledata.archive
     ```
+
 1. Copy the sample datasets into your sample data container:<br>
+
     ```console
     docker cp sampledata.archive mongodb-sampledata:/tmp/
     ```
+
 1. Import the sample datasets into MongoDB:<br>
+
     ```console
     docker exec -it mongodb-sampledata mongorestore --archive=/tmp/sampledata.archive
     ```
@@ -1328,10 +1371,13 @@ With your MCP Client running and connected to MongoDB Lens, try the following ex
 MongoDB Lens includes a safety mechanism for potentially destructive operations. Here's how it works in practice:
 
 1. Request to drop a collection:<br>
+
     ```
     "Drop the collection named test_collection"
     ```
+
 1. MongoDB Lens responds with a warning and confirmation token:<br>
+
     ```
     ⚠️ DESTRUCTIVE OPERATION WARNING ⚠️
 
@@ -1345,11 +1391,15 @@ MongoDB Lens includes a safety mechanism for potentially destructive operations.
 
     This code will expire in 5 minutes for security purposes.
     ```
+
 1. Confirm the operation by submitting the confirmation token:<br>
+
     ```
     "9876"
     ```
+
 1. MongoDB Lens executes the operation:<br>
+
     ```
     Collection 'test_collection' has been permanently deleted.
     ```
