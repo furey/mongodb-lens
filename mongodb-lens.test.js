@@ -3,7 +3,8 @@
 import { spawn } from 'child_process'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
-import { existsSync } from 'fs'
+import { existsSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
 import mongodb from 'mongodb'
 
 const { MongoClient, ObjectId } = mongodb
@@ -338,6 +339,8 @@ const startLensServer = async () => {
     env.CONFIG_DISABLE_DESTRUCTIVE_OPERATION_TOKENS = 'true'
   }
 
+  Object.assign(env, testConfig.extraEnv)
+
   lensProcess = spawn('node', [MONGODB_LENS_PATH], {
     env: env,
     stdio: ['pipe', 'pipe', 'pipe']
@@ -348,19 +351,13 @@ const startLensServer = async () => {
 }
 
 const setupResponseHandling = () => {
+  let pendingOutput = ''
+
   lensProcess.stdout.on('data', data => {
-    const response = data.toString().trim()
-    try {
-      const parsed = JSON.parse(response)
-      if (parsed.id && responseHandlers.has(parsed.id)) {
-        const handler = responseHandlers.get(parsed.id)
-        responseHandlers.delete(parsed.id)
-        handler.resolve(parsed)
-      }
-    } catch (e) {
-      console.error(`Parse error: ${e.message}`)
-      console.error(`Response was: ${response.substring(0, 200)}${response.length > 200 ? '…' : ''}`)
-    }
+    pendingOutput += data.toString()
+    const lines = pendingOutput.split('\n')
+    pendingOutput = lines.pop()
+    lines.map(line => line.trim()).filter(Boolean).forEach(handleResponseLine)
   })
 
   lensProcess.stderr.on('data', data => {
@@ -368,6 +365,20 @@ const setupResponseHandling = () => {
     if (isDebugging)
       console.log(`${COLORS.gray}[SERVER] ${output.split('\n').join(`\n[SERVER] `)}${COLORS.reset}`)
   })
+}
+
+const handleResponseLine = (response) => {
+  try {
+    const parsed = JSON.parse(response)
+    if (parsed.id && responseHandlers.has(parsed.id)) {
+      const handler = responseHandlers.get(parsed.id)
+      responseHandlers.delete(parsed.id)
+      handler.resolve(parsed)
+    }
+  } catch (e) {
+    console.error(`Parse error: ${e.message}`)
+    console.error(`Response was: ${response.substring(0, 200)}${response.length > 200 ? '…' : ''}`)
+  }
 }
 
 const waitForServerStart = () => {
@@ -1157,6 +1168,155 @@ const testAggregateDataTool = async () => {
   const content = response.result.content[0].text
   assert(content.includes('"avgValue":'), 'Average value not found')
   assert(content.includes('"count":'), 'Count not found')
+}
+
+const testAggregateDataOutStageTool = async () => {
+  await useTestDatabase()
+
+  const targetName = `aggregate_out_${Date.now()}`
+
+  const response = await runLensCommand({
+    command: 'mcp.tool.invoke',
+    params: {
+      name: 'aggregate-data',
+      args: {
+        collection: TEST_COLLECTION_NAME,
+        pipeline: JSON.stringify([{ $match: {} }, { $out: targetName }])
+      }
+    }
+  })
+
+  assert(!response.result.isError, `Unexpected error: ${response.result.content[0].text}`)
+  const writtenCount = await testDb.collection(targetName).countDocuments()
+  assert(writtenCount > 0, '$out stage did not write documents')
+  await testDb.collection(targetName).drop()
+}
+
+const testReadOnlyHidesWriteTools = () => withReadOnlyLensServer(async () => {
+  const response = await runLensCommand({ command: 'tools/list' })
+  const toolNames = response.result.tools.map(tool => tool.name)
+
+  const blockedTools = ['insert-document', 'drop-collection', 'connect-mongodb', 'add-connection-alias']
+  const visibleBlockedTools = blockedTools.filter(name => toolNames.includes(name))
+  assert(visibleBlockedTools.length === 0, `Write tools registered in read-only mode: ${visibleBlockedTools.join(', ')}`)
+  assert(toolNames.includes('find-documents'), 'find-documents missing in read-only mode')
+  assert(toolNames.includes('aggregate-data'), 'aggregate-data missing in read-only mode')
+})
+
+const testReadOnlyBlocksAggregationWrites = () => withReadOnlyLensServer(() =>
+  assertAggregationWritesBlocked('MongoDB Lens is in read-only mode'))
+
+const testDisabledWriteToolsBlockAggregationWrites = async () => {
+  const configPath = writeTempConfig({ disabled: { tools: ['insert-document', 'update-document', 'delete-document'] } })
+  await withLensServerEnv({ CONFIG_PATH: configPath }, () =>
+    assertAggregationWritesBlocked('write tools are disabled'))
+}
+
+const testReadOnlyInstructions = () => withReadOnlyLensServer(async () => {
+  const response = await runLensCommand({
+    command: 'initialize',
+    params: {
+      protocolVersion: '2025-03-26',
+      capabilities: {},
+      clientInfo: { name: 'mongodb-lens-test', version: '1.0.0' }
+    }
+  })
+  assert(response.result.instructions.includes('READ-ONLY MODE'), 'Read-only notice missing from server instructions')
+})
+
+const testInvalidReadOnlyValueExits = async () => {
+  const { exitCode, stderr } = await runLensUntilExit({ CONFIG_READ_ONLY: 'yes' })
+  assert(exitCode === 1, `Expected exit code 1, got ${exitCode}`)
+  assert(stderr.includes('CONFIG_READ_ONLY'), 'Error message does not name CONFIG_READ_ONLY')
+}
+
+const testReadOnlyKeyTypoExits = async () => {
+  const configPath = writeTempConfig({ readonly: true })
+  const { exitCode, stderr } = await runLensUntilExit({ CONFIG_PATH: configPath })
+  assert(exitCode === 1, `Expected exit code 1, got ${exitCode}`)
+  assert(stderr.includes("Did you mean 'readOnly'?"), 'Error message does not suggest readOnly')
+}
+
+const assertAggregationWritesBlocked = async (expectedReason) => {
+  await useTestDatabase()
+
+  for (const writeStage of ['$out', '$merge']) {
+    const targetName = `write_protected_${writeStage.slice(1)}_${Date.now()}`
+
+    const response = await runLensCommand({
+      command: 'mcp.tool.invoke',
+      params: {
+        name: 'aggregate-data',
+        args: {
+          collection: TEST_COLLECTION_NAME,
+          pipeline: JSON.stringify([{ $match: {} }, { [writeStage]: targetName }])
+        }
+      }
+    })
+
+    const responseText = response.result.content[0].text
+    assert(response.result.isError, `${writeStage} stage was not rejected`)
+    assert(responseText.includes(expectedReason), `Unexpected ${writeStage} error message: ${responseText}`)
+    const targetExists = await testDb.listCollections({ name: targetName }).hasNext()
+    assert(!targetExists, `${writeStage} stage created collection '${targetName}'`)
+  }
+}
+
+const writeTempConfig = (config) => {
+  const configPath = join(tmpdir(), `mongodb-lens-test-${process.pid}-${Date.now()}.json`)
+  writeFileSync(configPath, JSON.stringify(config))
+  return configPath
+}
+
+const runLensUntilExit = (extraEnv) => new Promise(resolve => {
+  const child = spawn('node', [MONGODB_LENS_PATH], {
+    env: { ...process.env, CONFIG_MONGO_URI: mongoUri, ...extraEnv },
+    stdio: ['pipe', 'pipe', 'pipe']
+  })
+  let stderr = ''
+  child.stderr.on('data', data => { stderr += data.toString() })
+  const timeout = setTimeout(() => child.kill('SIGKILL'), testConfig.serverStartupTimeout)
+  child.on('exit', exitCode => {
+    clearTimeout(timeout)
+    resolve({ exitCode, stderr })
+  })
+})
+
+const testReadOnlyLeavesProfilerUnchanged = async () => {
+  const sentinelSlowMs = 123
+  await testDb.command({ profile: 0, slowms: sentinelSlowMs })
+
+  try {
+    await withReadOnlyLensServer(async () => {
+      await useTestDatabase()
+      const { slowms } = await testDb.command({ profile: -1 })
+      assert(slowms === sentinelSlowMs, `Profiler slowms changed from ${sentinelSlowMs} to ${slowms}`)
+    })
+  } finally {
+    await testDb.command({ profile: 0, slowms: 100 })
+  }
+}
+
+const withReadOnlyLensServer = (testFn) =>
+  withLensServerEnv({ CONFIG_READ_ONLY: 'true' }, testFn)
+
+const withLensServerEnv = async (extraEnv, testFn) => {
+  await stopLensServer()
+  testConfig.extraEnv = extraEnv
+  try {
+    await testFn()
+  } finally {
+    await stopLensServer()
+    testConfig.extraEnv = {}
+  }
+}
+
+const stopLensServer = async () => {
+  if (!lensProcess) return
+  const exited = new Promise(resolve => lensProcess.once('exit', resolve))
+  lensProcess.kill('SIGKILL')
+  await exited
+  lensProcess = null
 }
 
 const testCreateIndexTool = async () => {
@@ -2330,7 +2490,8 @@ const COLORS = {
 const testConfig = {
   requestTimeout: 15000,
   serverStartupTimeout: 20000,
-  disableTokens: process.env.CONFIG_DISABLE_DESTRUCTIVE_OPERATION_TOKENS === 'true'
+  disableTokens: process.env.CONFIG_DISABLE_DESTRUCTIVE_OPERATION_TOKENS === 'true',
+  extraEnv: {}
 }
 
 const TEST_GROUPS = [
@@ -2385,6 +2546,7 @@ const TEST_GROUPS = [
     name: 'Advanced Tools',
     tests: [
       { name: 'aggregate-data Tool', fn: testAggregateDataTool },
+      { name: 'aggregate-data $out Stage', fn: testAggregateDataOutStageTool },
       { name: 'create-index Tool', fn: testCreateIndexTool },
       { name: 'drop-index Tool', fn: testDropIndexTool },
       { name: 'analyze-schema Tool', fn: testAnalyzeSchemaTool },
@@ -2404,6 +2566,18 @@ const TEST_GROUPS = [
       { name: 'clear-cache Tool', fn: testClearCacheTool },
       { name: 'shard-status Tool', fn: testShardStatusTool },
       { name: 'export-data Tool', fn: testExportDataTool }
+    ]
+  },
+  {
+    name: 'Read-Only Mode',
+    tests: [
+      { name: 'read-only hides write tools', fn: testReadOnlyHidesWriteTools },
+      { name: 'read-only blocks aggregation writes', fn: testReadOnlyBlocksAggregationWrites },
+      { name: 'read-only leaves profiler unchanged', fn: testReadOnlyLeavesProfilerUnchanged },
+      { name: 'read-only server instructions', fn: testReadOnlyInstructions },
+      { name: 'disabled write tools block aggregation writes', fn: testDisabledWriteToolsBlockAggregationWrites },
+      { name: 'invalid CONFIG_READ_ONLY value exits', fn: testInvalidReadOnlyValueExits },
+      { name: 'readOnly config key typo exits', fn: testReadOnlyKeyTypoExits }
     ]
   },
   {

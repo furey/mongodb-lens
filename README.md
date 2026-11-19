@@ -508,6 +508,7 @@ MongoDB Lens supports extensive customization via JSON configuration file.
   },
   "logLevel": "info",                              // Log level (info or verbose)
   "disableDestructiveOperationTokens": false,      // Whether to skip confirmation for destructive ops
+  "readOnly": false,                               // Whether to block tools and pipeline stages that write
   "watchdogIntervalMs": 30000,                     // Interval for connection monitoring
   "defaults": {
     "slowMs": 100,                                 // Threshold for slow query detection
@@ -909,6 +910,8 @@ mongodb://readonly:eXaMpLePaSsWoRd@localhost:27017/mydatabase
 
 Using read-only credentials is a simple yet effective way to enforce security boundaries, especially when you're poking around schemas or running ad-hoc queries.
 
+For a second layer of protection, also enable [read-only mode](#read-only-configuration).
+
 ### Data Protection: Working with Database Backups
 
 When working with MongoDB Lens, consider connecting to a backup copy of your data hosted on a separate MongoDB instance.
@@ -1072,6 +1075,7 @@ These tools can cause immediate data loss and should be considered for disabling
 - `delete-document`: Removes documents matching specified criteria
 - `bulk-operations`: Can perform batch deletions when configured to do so
 - `rename-collection`: Can overwrite existing collections when using the drop target option
+- `aggregate-data`: A `$out` or `$merge` stage writes to a collection, and `$out` replaces an existing collection
 
 #### Medium-Risk Tools
 
@@ -1083,34 +1087,35 @@ These tools can modify data but typically don't cause immediate data loss:
 
 #### Read-Only Configuration
 
-For a complete read-only configuration, disable all potentially destructive tools:
+Set `readOnly` to `true` in your [configuration file](#configuration-config-file):
 
 ```json
 {
-  "disabled": {
-    "tools": [
-      "drop-user",
-      "drop-index",
-      "create-user",
-      "transaction",
-      "create-index",
-      "drop-database",
-      "drop-collection",
-      "insert-document",
-      "update-document",
-      "delete-document",
-      "bulk-operations",
-      "create-database",
-      "gridfs-operation",
-      "create-collection",
-      "rename-collection",
-      "create-timeseries"
-    ]
-  }
+  "readOnly": true
 }
 ```
 
-This configuration allows MongoDB Lens to query and analyze data while preventing any modifications, providing multiple layers of protection against accidental data loss.
+Or set the `CONFIG_READ_ONLY` environment variable:
+
+```console
+CONFIG_READ_ONLY=true npx -y mongodb-lens@latest
+```
+
+In read-only mode, MongoDB Lens:
+
+- Registers only tools that read data. Tools that write data, create or drop users, or connect to a new URI or alias (`connect-mongodb`, `add-connection-alias`) are not registered. `connect-original` stays available and returns to the startup connection only
+- Rejects aggregation pipelines with a `$out` or `$merge` stage
+- Does not change the database profiler settings (`analyze-query-patterns` reads existing profiler data only)
+- Prints `Read-only mode: on` at startup
+
+The `readOnly` setting takes precedence over the `enabled` and `disabled` lists.
+
+MongoDB Lens does not start if `CONFIG_READ_ONLY` is not `true` or `false`, if the configuration file is not valid JSON, or if the configuration file has a misspelled `readOnly` key (for example `readonly`).
+
+If `insert-document`, `update-document`, or `delete-document` is disabled, MongoDB Lens also rejects `$out` and `$merge` stages, even when `readOnly` is `false`. This protects configurations that disable write tools with a `disabled` or `enabled` list.
+
+> [!WARNING]<br>
+> Read-only mode is a safeguard inside MongoDB Lens, not a security boundary. To guarantee that MongoDB Lens cannot change your data, connect as a user with the MongoDB `read` role (see [Read-Only User Accounts](#data-protection-read-only-user-accounts)) and use read-only mode as a second layer.
 
 #### Selective Component Enabling
 
@@ -1134,7 +1139,9 @@ In addition to [disabling components](#disabling-tools), specify exactly which c
 ```
 
 > [!IMPORTANT]<br>
-> If a component appears in both `enabled` and `disabled` lists, the `enabled` setting takes precedence.
+> If a component appears in both `enabled` and `disabled` lists, the `enabled` setting takes precedence. The [`readOnly`](#read-only-configuration) setting takes precedence over both.
+>
+> The `aggregate-data` tool can write data with a `$out` or `$merge` stage. This example does not enable `insert-document`, `update-document`, or `delete-document`, so MongoDB Lens rejects those stages (see [Read-Only Configuration](#read-only-configuration)).
 
 ## Tutorial
 
@@ -1357,7 +1364,7 @@ With your MCP Client running and connected to MongoDB Lens, try the following ex
 
 - _"Connect to mongodb://localhost:27018"_<br>
   <sup>➥ Uses `connect-mongodb` tool</sup>
-- _"Connect to mongodb+srv://username:password@cluster.mongodb.net/mydb"_<br>
+- _"Connect to `mongodb+srv://username:password@cluster.mongodb.net/mydb`"_<br>
   <sup>➥ Uses `connect-mongodb` tool</sup>
 - _"Connect back to the original mongodb instance"_<br>
   <sup>➥ Uses `connect-original` tool</sup>

@@ -30,6 +30,8 @@ const start = async (mongoUri) => {
 
   await setProfilerSlowMs()
 
+  logWriteProtection()
+
   log('Initializing MCP server…')
   server = new McpServer({
     name: 'MongoDB Lens',
@@ -42,7 +44,7 @@ const start = async (mongoUri) => {
       url: 'https://about.me/jamesfurey'
     }
   }, {
-    instructions
+    instructions: buildInstructions()
   })
 
   server.fallbackRequestHandler = async request => {
@@ -299,7 +301,35 @@ const changeConnection = async (uri, validate = true) => {
   }
 }
 
+const isBlockedByReadOnly = (type, name) =>
+  config.readOnly && type === 'tools' && name !== 'all' && !READ_ONLY_ALLOWED_TOOLS.includes(name)
+
+const areDocumentWritesDisabled = () =>
+  DOCUMENT_WRITE_TOOLS.some(name => isDisabled('tools', name))
+
+const isWriteProtected = () =>
+  config.readOnly || areDocumentWritesDisabled()
+
+const getWriteProtectionReason = () =>
+  config.readOnly
+    ? 'MongoDB Lens is in read-only mode'
+    : `write tools are disabled (${DOCUMENT_WRITE_TOOLS.filter(name => isDisabled('tools', name)).join(', ')})`
+
+const logWriteProtection = () => {
+  if (config.readOnly) return log(`Read-only mode: on. Only ${READ_ONLY_ALLOWED_TOOLS.length} read tools are available; aggregation $out and $merge stages are blocked.`, true)
+  if (areDocumentWritesDisabled()) return log(`Write protection: aggregation $out and $merge stages are blocked because ${getWriteProtectionReason()}.`, true)
+  log('Read-only mode: off.')
+}
+
+const buildInstructions = () => {
+  if (config.readOnly) return `${READ_ONLY_INSTRUCTIONS}\n${instructions}`
+  if (areDocumentWritesDisabled()) return `${WRITE_PROTECTED_INSTRUCTIONS}\n${instructions}`
+  return instructions
+}
+
 const isDisabled = (type, name) => {
+  if (isBlockedByReadOnly(type, name)) return true
+
   if (config.enabled && config.enabled[type] !== undefined) {
     if (name === 'all') return config.enabled[type] === false
     if (Array.isArray(config.enabled[type]) && config.enabled[type].includes(name)) return false
@@ -2126,7 +2156,7 @@ const registerTools = (server) => {
   if (!isDisabled('tools', 'aggregate-data')) {
     server.tool(
       'aggregate-data',
-      'Run aggregation pipelines',
+      'Run aggregation pipelines ($out and $merge stages write data and are blocked when write protection is on)',
       {
         collection: z.string().min(1).describe('Collection name'),
         pipeline: z.string().describe('Aggregation pipeline as JSON string array'),
@@ -2439,26 +2469,9 @@ const registerTools = (server) => {
 
           let queryStats = []
           try {
-            const adminDb = mongoClient.db('admin')
-            const profilerStatus = await currentDb.command({ profile: -1 })
-
-            let prevProfileLevel = profilerStatus.was
-            let prevSlowMs = profilerStatus.slowms
-
-            await currentDb.command({ profile: 2, slowms: 0 })
-
-            log(`Tool: Monitoring queries for ${duration} seconds…`)
-
-            await new Promise(resolve => setTimeout(resolve, duration * 1000))
-
-            queryStats = await currentDb.collection('system.profile')
-              .find({ ns: `${currentDbName}.${collection}`, op: 'query' })
-              .sort({ ts: -1 })
-              .limit(100)
-              .toArray()
-
-            await currentDb.command({ profile: prevProfileLevel, slowms: prevSlowMs })
-
+            queryStats = config.readOnly
+              ? await readProfiledQueries(collection)
+              : await captureProfiledQueries(collection, duration)
           } catch (profileError) {
             log(`Tool: Unable to use profiler: ${profileError.message}`)
           }
@@ -4013,7 +4026,27 @@ const getCollectionFields = async (collectionName) => {
   return fieldsArray
 }
 
+const captureProfiledQueries = async (collection, duration) => {
+  const { was: previousLevel, slowms: previousSlowMs } = await currentDb.command({ profile: -1 })
+  await currentDb.command({ profile: 2, slowms: 0 })
+  try {
+    log(`Tool: Monitoring queries for ${duration} seconds…`)
+    await new Promise(resolve => setTimeout(resolve, duration * 1000))
+    return await readProfiledQueries(collection)
+  } finally {
+    await currentDb.command({ profile: previousLevel, slowms: previousSlowMs })
+  }
+}
+
+const readProfiledQueries = (collection) =>
+  currentDb.collection('system.profile')
+    .find({ ns: `${currentDbName}.${collection}`, op: 'query' })
+    .sort({ ts: -1 })
+    .limit(100)
+    .toArray()
+
 const setProfilerSlowMs = async () => {
+  if (config.readOnly) return false
   try {
     await currentDb.command({ profile: -1 })
     await currentDb.command({ profile: 0, slowms: config.defaults.slowMs })
@@ -5398,6 +5431,7 @@ const generateJsonSchemaValidator = (schema, strictness) => {
 }
 
 const processAggregationPipeline = (pipeline) => {
+  if (isWriteProtected()) throwIfPipelineWrites(pipeline)
   if (!pipeline || !Array.isArray(pipeline)) return pipeline
   return pipeline.map(stage => {
     for (const operator in stage) {
@@ -5417,6 +5451,14 @@ const processAggregationPipeline = (pipeline) => {
     }
     return stage
   })
+}
+
+const throwIfPipelineWrites = (pipeline) => {
+  if (!Array.isArray(pipeline)) throw new Error('Aggregation pipeline must be a JSON array')
+  const writeStage = pipeline
+    .flatMap(stage => Object.keys(stage ?? {}))
+    .find(operator => AGGREGATION_WRITE_STAGES.includes(operator))
+  if (writeStage) throw new Error(`Pipeline stage '${writeStage}' writes data and is blocked because ${getWriteProtectionReason()}`)
 }
 
 const sanitizeTextSearch = (searchText) => {
@@ -5612,9 +5654,10 @@ const loadConfig = () => {
       const fileContent = readFileSync(configPath, 'utf8')
       const strippedContent = stripJsonComments(fileContent)
       const configFile = JSON.parse(strippedContent)
+      exitOnReadOnlyKeyTypo(configFile)
       config = mergeConfigs(config, configFile)
     } catch (error) {
-      console.error(`Error loading config file: ${error.message}`)
+      exitWithConfigError(`Error loading config file ${configPath}: ${error.message}`)
     }
   }
 
@@ -5732,9 +5775,20 @@ const parseEnvValue = (value, defaultValue, path) => {
 
     return normalizedValue
   } catch (error) {
+    if (path === 'readOnly') exitWithConfigError(`Error parsing CONFIG_READ_ONLY: ${error.message}. Use 'true' or 'false'.`)
     console.error(`Error parsing environment variable for config [${path}]: ${error.message}. Using default: ${defaultValue}`)
     return defaultValue
   }
+}
+
+const exitOnReadOnlyKeyTypo = (configFile) => {
+  const typoKey = READ_ONLY_CONFIG_KEY_TYPOS.find(key => Object.hasOwn(configFile, key))
+  if (typoKey) exitWithConfigError(`Unknown config key '${typoKey}'. Did you mean 'readOnly'?`)
+}
+
+const exitWithConfigError = (message) => {
+  console.error(`${message} MongoDB Lens will not start with an invalid configuration.`)
+  process.exit(1)
 }
 
 const parseJsonString = (jsonString) => {
@@ -5899,6 +5953,39 @@ const JSONRPC_ERROR_CODES = {
   RESOURCE_ALREADY_EXISTS: -32042
 }
 
+const READ_ONLY_ALLOWED_TOOLS = [
+  'connect-original',
+  'list-connections',
+  'list-databases',
+  'current-database',
+  'use-database',
+  'list-collections',
+  'validate-collection',
+  'distinct-values',
+  'find-documents',
+  'count-documents',
+  'aggregate-data',
+  'get-stats',
+  'analyze-schema',
+  'generate-schema-validator',
+  'compare-schemas',
+  'explain-query',
+  'analyze-query-patterns',
+  'collation-query',
+  'text-search',
+  'geo-query',
+  'watch-changes',
+  'clear-cache',
+  'shard-status',
+  'export-data'
+]
+
+const DOCUMENT_WRITE_TOOLS = ['insert-document', 'update-document', 'delete-document']
+
+const READ_ONLY_CONFIG_KEY_TYPOS = ['readonly', 'read_only', 'read-only', 'ReadOnly']
+
+const AGGREGATION_WRITE_STAGES = ['$out', '$merge']
+
 const instructions = `
 MongoDB-Lens: NL→MongoDB via MCP
 
@@ -5940,6 +6027,15 @@ FLOWS:
 SAFE: destructive ops require confirmation tokens
 
 DOCS: github.com/furey/mongodb-lens/blob/main/README.md
+`
+
+const READ_ONLY_INSTRUCTIONS = `
+READ-ONLY MODE: write tools are not available and aggregate-data rejects $out/$merge stages.
+Do not suggest inserts, updates, deletes, drops, renames, or index, user, or connection changes.
+`
+
+const WRITE_PROTECTED_INSTRUCTIONS = `
+WRITE-PROTECTED: document write tools are disabled and aggregate-data rejects $out/$merge stages.
 `
 
 const importantNoticeToAI = `
@@ -5990,6 +6086,7 @@ const defaultConfig = {
   },
   logLevel: 'info',
   disableDestructiveOperationTokens: false,
+  readOnly: false,
   watchdogIntervalMs: 30000,
   defaults: {
     slowMs: 100,
