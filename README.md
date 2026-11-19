@@ -251,22 +251,31 @@ docker run --rm -i --network=host --pull=always furey/mongodb-lens
 > Node.js from source requires [Node.js](https://nodejs.org/en/download) installed and running on your system (suggestion: use [Volta](https://volta.sh)).
 
 1. Clone the MongoDB Lens repository:<br>
+
     ```console
     git clone https://github.com/furey/mongodb-lens.git
     ```
+
 1. Navigate to the cloned repository directory:<br>
+
     ```console
     cd /path/to/mongodb-lens
     ```
+
 1. Ensure Node.js is installed:<br>
+
     ```console
     node --version # Ideally >= v22.x but MongoDB Lens is >= v18.x compatible
     ```
+
 1. Install Node.js dependencies:<br>
+
     ```console
     npm ci
     ```
+
 1. Start the server:<br>
+
     ```console
     # Using default connection string mongodb://localhost:27017
     node mongodb-lens.js
@@ -281,22 +290,31 @@ docker run --rm -i --network=host --pull=always furey/mongodb-lens
 > Docker from source requires [Docker](https://docs.docker.com/get-started/get-docker) installed and running on your system.
 
 1. Clone the MongoDB Lens repository:<br>
+
     ```console
     git clone https://github.com/furey/mongodb-lens.git
     ```
+
 1. Navigate to the cloned repository directory:<br>
+
     ```console
     cd /path/to/mongodb-lens
     ```
+
 1. Ensure Docker is installed:<br>
+
     ```console
     docker --version # Ideally >= v27.x
     ```
+
 1. Build the Docker image:<br>
+
     ```console
     docker build -t mongodb-lens .
     ```
+
 1. Run the container:<br>
+
     ```console
     # Using default connection string mongodb://localhost:27017
     docker run --rm -i --network=host mongodb-lens
@@ -330,14 +348,19 @@ To use MongoDB Lens with older MongoDB instances, you need to use a MongoDB Node
 #### Older MongoDB Versions: Running from Source
 
 1. Clone the MongoDB Lens repository:<br>
+
     ```console
     git clone https://github.com/furey/mongodb-lens.git
     ```
+
 1. Navigate to the cloned repository directory:<br>
+
     ```console
     cd /path/to/mongodb-lens
     ```
+
 1. Modify `package.json`:<br>
+
     ```diff
     "dependencies": {
       ...
@@ -346,11 +369,15 @@ To use MongoDB Lens with older MongoDB instances, you need to use a MongoDB Node
       ...
     }
     ```
+
 1. Install Node.js dependencies:<br>
+
     ```console
     npm install
     ```
+
 1. Start MongoDB Lens:<br>
+
     ```console
     node mongodb-lens.js mongodb://older-mongodb-instance
     ```
@@ -481,6 +508,7 @@ MongoDB Lens supports extensive customization via JSON configuration file.
   },
   "logLevel": "info",                              // Log level (info or verbose)
   "disableDestructiveOperationTokens": false,      // Whether to skip confirmation for destructive ops
+  "readOnly": false,                               // Whether to block tools and pipeline stages that write
   "watchdogIntervalMs": 30000,                     // Interval for connection monitoring
   "defaults": {
     "slowMs": 100,                                 // Threshold for slow query detection
@@ -667,6 +695,7 @@ docker run --rm -i --network=host --pull=always -e CONFIG_DEFAULTS_QUERY_LIMIT='
 For consistent environment variable usage across Windows, macOS, and Linux, consider using `cross-env`:
 
 1. Install cross-env globally:<br>
+
    ```console
    # Using NPM
    npm install -g cross-env
@@ -674,7 +703,9 @@ For consistent environment variable usage across Windows, macOS, and Linux, cons
    # Using Volta (see: https://volta.sh)
    volta install cross-env
    ```
+
 1. Prefix any NPX or Node.js environment variables in this document's examples:<br>
+
    ```console
    # Example NPX usage with cross-env
    cross-env CONFIG_DEFAULTS_QUERY_LIMIT='25' npx -y mongodb-lens@latest
@@ -714,6 +745,7 @@ For each option:
 - To use a custom config file, set [`CONFIG_PATH`](#configuration-config-file) environment variable.
 - To include environment variables:
   - For NPX or Node.js add `"env": {}` with key-value pairs, for example:<br>
+
     ```json
     "command": "/path/to/npx",
     "args": [
@@ -725,7 +757,9 @@ For each option:
       "CONFIG_LOG_LEVEL": "verbose"
     }
     ```
+
   - For Docker add `-e` flags, for example:<br>
+
     ```json
     "command": "docker",
     "args": [
@@ -818,6 +852,7 @@ For each option:
 Example NPX usage:
 
 1. Run MCP Inspector:<br>
+
     ```console
     # Using default connection string mongodb://localhost:27017
     npx -y @modelcontextprotocol/inspector npx -y mongodb-lens@latest
@@ -828,7 +863,8 @@ Example NPX usage:
     # Using custom ports
     SERVER_PORT=1234 CLIENT_PORT=5678 npx -y @modelcontextprotocol/inspector npx -y mongodb-lens@latest
     ```
-1. Open MCP Inspector: http://localhost:5173
+
+1. Open MCP Inspector: <http://localhost:5173>
 
 MCP Inspector should support the full range of MongoDB Lens capabilities, including autocompletion for collection names and query fields.
 
@@ -873,6 +909,8 @@ mongodb://readonly:eXaMpLePaSsWoRd@localhost:27017/mydatabase
 ```
 
 Using read-only credentials is a simple yet effective way to enforce security boundaries, especially when you're poking around schemas or running ad-hoc queries.
+
+For a second layer of protection, also enable [read-only mode](#read-only-configuration).
 
 ### Data Protection: Working with Database Backups
 
@@ -1037,6 +1075,7 @@ These tools can cause immediate data loss and should be considered for disabling
 - `delete-document`: Removes documents matching specified criteria
 - `bulk-operations`: Can perform batch deletions when configured to do so
 - `rename-collection`: Can overwrite existing collections when using the drop target option
+- `aggregate-data`: A `$out` or `$merge` stage writes to a collection, and `$out` replaces an existing collection
 
 #### Medium-Risk Tools
 
@@ -1048,34 +1087,35 @@ These tools can modify data but typically don't cause immediate data loss:
 
 #### Read-Only Configuration
 
-For a complete read-only configuration, disable all potentially destructive tools:
+Set `readOnly` to `true` in your [configuration file](#configuration-config-file):
 
 ```json
 {
-  "disabled": {
-    "tools": [
-      "drop-user",
-      "drop-index",
-      "create-user",
-      "transaction",
-      "create-index",
-      "drop-database",
-      "drop-collection",
-      "insert-document",
-      "update-document",
-      "delete-document",
-      "bulk-operations",
-      "create-database",
-      "gridfs-operation",
-      "create-collection",
-      "rename-collection",
-      "create-timeseries"
-    ]
-  }
+  "readOnly": true
 }
 ```
 
-This configuration allows MongoDB Lens to query and analyze data while preventing any modifications, providing multiple layers of protection against accidental data loss.
+Or set the `CONFIG_READ_ONLY` environment variable:
+
+```console
+CONFIG_READ_ONLY=true npx -y mongodb-lens@latest
+```
+
+In read-only mode, MongoDB Lens:
+
+- Registers only tools that read data. Tools that write data, create or drop users, or connect to a new URI or alias (`connect-mongodb`, `add-connection-alias`) are not registered. `connect-original` stays available and returns to the startup connection only
+- Rejects aggregation pipelines with a `$out` or `$merge` stage
+- Does not change the database profiler settings (`analyze-query-patterns` reads existing profiler data only)
+- Prints `Read-only mode: on` at startup
+
+The `readOnly` setting takes precedence over the `enabled` and `disabled` lists.
+
+MongoDB Lens does not start if `CONFIG_READ_ONLY` is not `true` or `false`, if the configuration file is not valid JSON, or if the configuration file has a misspelled `readOnly` key (for example `readonly`).
+
+If `insert-document`, `update-document`, or `delete-document` is disabled, MongoDB Lens also rejects `$out` and `$merge` stages, even when `readOnly` is `false`. This protects configurations that disable write tools with a `disabled` or `enabled` list.
+
+> [!WARNING]<br>
+> Read-only mode is a safeguard inside MongoDB Lens, not a security boundary. To guarantee that MongoDB Lens cannot change your data, connect as a user with the MongoDB `read` role (see [Read-Only User Accounts](#data-protection-read-only-user-accounts)) and use read-only mode as a second layer.
 
 #### Selective Component Enabling
 
@@ -1099,7 +1139,9 @@ In addition to [disabling components](#disabling-tools), specify exactly which c
 ```
 
 > [!IMPORTANT]<br>
-> If a component appears in both `enabled` and `disabled` lists, the `enabled` setting takes precedence.
+> If a component appears in both `enabled` and `disabled` lists, the `enabled` setting takes precedence. The [`readOnly`](#read-only-configuration) setting takes precedence over both.
+>
+> The `aggregate-data` tool can write data with a `$out` or `$merge` stage. This example does not enable `insert-document`, `update-document`, or `delete-document`, so MongoDB Lens rejects those stages (see [Read-Only Configuration](#read-only-configuration)).
 
 ## Tutorial
 
@@ -1120,10 +1162,13 @@ This following tutorial guides you through setting up a MongoDB container with s
 > If Docker is already running a container on port 27017, stop it before proceeding.
 
 1. Initialise the sample data container:<br>
+
     ```console
     docker run --name mongodb-sampledata -d -p 27017:27017 mongo:6
     ```
+
 1. Verify the container is running without issue:<br>
+
     ```console
     docker ps | grep mongodb-sampledata
     ```
@@ -1133,14 +1178,19 @@ This following tutorial guides you through setting up a MongoDB container with s
 MongoDB provides several [sample datasets](https://www.mongodb.com/docs/atlas/sample-data/#available-sample-datasets) which we'll use to explore MongoDB Lens.
 
 1. Download the sample datasets:
+
     ```console<br>
     curl -LO https://atlas-education.s3.amazonaws.com/sampledata.archive
     ```
+
 1. Copy the sample datasets into your sample data container:<br>
+
     ```console
     docker cp sampledata.archive mongodb-sampledata:/tmp/
     ```
+
 1. Import the sample datasets into MongoDB:<br>
+
     ```console
     docker exec -it mongodb-sampledata mongorestore --archive=/tmp/sampledata.archive
     ```
@@ -1314,7 +1364,7 @@ With your MCP Client running and connected to MongoDB Lens, try the following ex
 
 - _"Connect to mongodb://localhost:27018"_<br>
   <sup>➥ Uses `connect-mongodb` tool</sup>
-- _"Connect to mongodb+srv://username:password@cluster.mongodb.net/mydb"_<br>
+- _"Connect to `mongodb+srv://username:password@cluster.mongodb.net/mydb`"_<br>
   <sup>➥ Uses `connect-mongodb` tool</sup>
 - _"Connect back to the original mongodb instance"_<br>
   <sup>➥ Uses `connect-original` tool</sup>
@@ -1328,10 +1378,13 @@ With your MCP Client running and connected to MongoDB Lens, try the following ex
 MongoDB Lens includes a safety mechanism for potentially destructive operations. Here's how it works in practice:
 
 1. Request to drop a collection:<br>
+
     ```
     "Drop the collection named test_collection"
     ```
+
 1. MongoDB Lens responds with a warning and confirmation token:<br>
+
     ```
     ⚠️ DESTRUCTIVE OPERATION WARNING ⚠️
 
@@ -1345,11 +1398,15 @@ MongoDB Lens includes a safety mechanism for potentially destructive operations.
 
     This code will expire in 5 minutes for security purposes.
     ```
+
 1. Confirm the operation by submitting the confirmation token:<br>
+
     ```
     "9876"
     ```
+
 1. MongoDB Lens executes the operation:<br>
+
     ```
     Collection 'test_collection' has been permanently deleted.
     ```
